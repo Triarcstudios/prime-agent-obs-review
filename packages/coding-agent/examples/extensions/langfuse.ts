@@ -3,6 +3,7 @@
  * Load with --extension or copy into the agent extensions directory.
  * Set PI_LANGFUSE_ENABLED=1, LANGFUSE_HOST, LANGFUSE_PUBLIC_KEY,
  * and LANGFUSE_SECRET_KEY. Credentials stay in the environment.
+ * Alternatively set PI_OTEL_TRACE_ENDPOINT and PI_OTEL_AUTHORIZATION for a collector.
  * The host must resolve from the agent runtime (including remote workers).
  * One root span is awaited per run; prompt and response bodies are not exported.
  */
@@ -14,12 +15,15 @@ export default function langfuse(pi: ExtensionAPI) {
 	const host = process.env.LANGFUSE_HOST;
 	const publicKey = process.env.LANGFUSE_PUBLIC_KEY;
 	const secretKey = process.env.LANGFUSE_SECRET_KEY;
-	if (!host || !publicKey || !secretKey) {
+	const endpoint =
+		process.env.PI_OTEL_TRACE_ENDPOINT || (host ? `${host.replace(/\/$/, "")}/api/public/otel/v1/traces` : undefined);
+	const authorization =
+		process.env.PI_OTEL_AUTHORIZATION ||
+		(publicKey && secretKey ? `Basic ${Buffer.from(`${publicKey}:${secretKey}`).toString("base64")}` : undefined);
+	if (!endpoint || !authorization) {
 		console.error("Langfuse tracing FAIL: missing configuration");
 		return;
 	}
-	const endpoint = `${host.replace(/\/$/, "")}/api/public/otel/v1/traces`;
-	const authorization = `Basic ${Buffer.from(`${publicKey}:${secretKey}`).toString("base64")}`;
 	let run: { traceId: string; spanId: string; startTimeUnixNano: string } | undefined;
 	pi.on("agent_start", () => {
 		run = {

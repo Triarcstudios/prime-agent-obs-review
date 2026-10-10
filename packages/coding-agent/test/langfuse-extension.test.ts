@@ -5,7 +5,7 @@ import langfuse from "../examples/extensions/langfuse.js";
 import type { ExtensionAPI, ExtensionContext } from "../src/core/extensions/types.js";
 
 afterEach(() => vi.unstubAllEnvs());
-it("exports an agent run without prompt content", async () => {
+it.each([false, true])("exports without prompt content (collector=%s)", async (collector) => {
 	let received: unknown;
 	const server = createServer(async (req, res) => {
 		let body = "";
@@ -24,7 +24,9 @@ it("exports an agent run without prompt content", async () => {
 		const address = server.address();
 		if (!address || typeof address === "string") throw new Error("missing server address");
 		vi.stubEnv("PI_LANGFUSE_ENABLED", "1");
-		vi.stubEnv("LANGFUSE_HOST", `http://127.0.0.1:${address.port}`);
+		vi.stubEnv("LANGFUSE_HOST", collector ? "" : `http://127.0.0.1:${address.port}`);
+		vi.stubEnv("PI_OTEL_TRACE_ENDPOINT", collector ? `http://127.0.0.1:${address.port}/v1/traces` : "");
+		vi.stubEnv("PI_OTEL_AUTHORIZATION", collector ? "Basic collector-test" : "");
 		vi.stubEnv("LANGFUSE_PUBLIC_KEY", "test-public");
 		vi.stubEnv("LANGFUSE_SECRET_KEY", "test-secret");
 		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
@@ -39,8 +41,10 @@ it("exports an agent run without prompt content", async () => {
 		await handlers.get("agent_start")?.({}, ctx);
 		await handlers.get("agent_end")?.({ messages: [{ content: "private-prompt" }] }, ctx);
 		expect(received).toMatchObject({
-			path: "/api/public/otel/v1/traces",
-			auth: `Basic ${Buffer.from("test-public:test-secret").toString("base64")}`,
+			path: collector ? "/v1/traces" : "/api/public/otel/v1/traces",
+			auth: collector
+				? "Basic collector-test"
+				: `Basic ${Buffer.from("test-public:test-secret").toString("base64")}`,
 			version: "4",
 			body: {
 				resourceSpans: [
