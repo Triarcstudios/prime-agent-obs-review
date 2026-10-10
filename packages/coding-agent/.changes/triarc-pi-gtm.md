@@ -1,0 +1,1 @@
+- Added an isolated Devin `pi` launcher with pinned Antigravity and Braintrust extensions and opt-in Titan workflows.

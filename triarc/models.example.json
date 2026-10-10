@@ -1,0 +1,72 @@
+{
+  "providers": {
+    "cerebras": {
+      "baseUrl": "https://api.cerebras.ai/v1",
+      "api": "openai-completions",
+      "headers": {
+        "User-Agent": "Mozilla/5.0"
+      },
+      "models": [
+        {
+          "id": "gpt-oss-120b",
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "reasoning": true,
+          "compat": {
+            "supportsDeveloperRole": false
+          }
+        }
+      ]
+    },
+    "google": {
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "api": "google-generative-ai",
+      "models": [
+        {
+          "id": "gemini-3.7-flash",
+          "contextWindow": 1000000,
+          "maxTokens": 8192,
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "thinkingLevelMap": {
+            "off": null,
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high"
+          }
+        }
+      ]
+    },
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "openai/gpt-oss-120b",
+          "contextWindow": 131072,
+          "maxTokens": 8192,
+          "reasoning": true,
+          "compat": {
+            "supportsDeveloperRole": false
+          }
+        },
+        {
+          "id": "google/gemma-4-31b-it:free",
+          "contextWindow": 262144,
+          "maxTokens": 8192,
+          "reasoning": false
+        },
+        {
+          "id": "liquid/lfm-2.5-2.6b:free",
+          "contextWindow": 32768,
+          "maxTokens": 4096,
+          "reasoning": false
+        }
+      ]
+    }
+  }
+}

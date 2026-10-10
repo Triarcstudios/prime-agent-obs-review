@@ -1,0 +1,6 @@
+{
+  "name": "triarc-pi-gtm",
+  "private": true,
+  "type": "module",
+  "dependencies": { "braintrust": "3.36.0" }
+}

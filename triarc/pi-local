@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PRIME_AGENT_CODING_AGENT_DIR="${PRIME_AGENT_CODING_AGENT_DIR:-$ROOT/../agent}"
+export ANTIGRAVITY_NO_PREWARM=1
+EXTENSIONS=(-e "$ROOT/triarc/vendor/antigravity/index.ts" -e "$ROOT/triarc/extensions/braintrust.ts")
+ARGS=()
+for arg in "$@"; do
+  if [[ "$arg" == --titan ]]; then
+    for file in titan-harness/titan-harness.ts ctx-picker.ts stack-settings.ts titan-child-hooks.ts; do
+      EXTENSIONS+=(-e "$ROOT/triarc/vendor/titan-harness/extensions/$file")
+    done
+  else
+    ARGS+=("$arg")
+  fi
+done
+exec node "$ROOT/packages/coding-agent/dist/bundle/cli.js" "${EXTENSIONS[@]}" "${ARGS[@]}"

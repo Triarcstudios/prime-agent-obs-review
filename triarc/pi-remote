@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+GCLOUD="${PI_GCLOUD:-/snap/bin/gcloud}"
+REMOTE="sudo -n -u pi -H /srv/pi/bin/pi"
+for arg in "$@"; do
+  quoted="'${arg//\'/\'\\\'\'}'"
+  REMOTE+=" $quoted"
+done
+SSH_ARGS=()
+if [[ -t 0 && -t 1 ]]; then SSH_ARGS+=(--ssh-flag=-tt); fi
+exec "$GCLOUD" compute ssh instance-20260925-150839 \
+  --project=affable-album-508506-m1 --zone=us-central1-c --tunnel-through-iap \
+  --verbosity=error "${SSH_ARGS[@]}" --command="$REMOTE"
