@@ -1,0 +1,8 @@
+{
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-6-astra",
+  "quietStartup": false,
+  "extensions": [],
+  "packages": [],
+  "onboardingShown": true
+}
