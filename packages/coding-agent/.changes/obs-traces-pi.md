@@ -1,0 +1,1 @@
+- Added an opt-in, content-free Langfuse tracing extension for agent runs.
