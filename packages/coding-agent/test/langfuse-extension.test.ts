@@ -4,18 +4,36 @@ import { afterEach, expect, it, vi } from "vitest";
 import langfuse from "../examples/extensions/langfuse.js";
 import type { ExtensionAPI, ExtensionContext } from "../src/core/extensions/types.js";
 
+const CONTENT = "private-content-7f3a";
+type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
+
+function load() {
+	const handlers = new Map<string, Handler>();
+	langfuse({ on: (event: string, handler: Handler) => handlers.set(event, handler) } as unknown as ExtensionAPI);
+	return handlers;
+}
+
+function stubCredentials(enabled: string | undefined) {
+	vi.stubEnv("PI_LANGFUSE_ENABLED", enabled);
+	vi.stubEnv("LANGFUSE_HOST", "http://127.0.0.1:9");
+	vi.stubEnv("LANGFUSE_PUBLIC_KEY", "test-public");
+	vi.stubEnv("LANGFUSE_SECRET_KEY", "test-secret");
+	vi.stubEnv("PI_OTEL_TRACE_ENDPOINT", "http://127.0.0.1:9/v1/traces");
+	vi.stubEnv("PI_OTEL_AUTHORIZATION", "Basic collector-test");
+}
+
 afterEach(() => vi.unstubAllEnvs());
-it.each([false, true])("exports without prompt content (collector=%s)", async (collector) => {
-	let received: unknown;
+it.each([false, true])("exports one content-free root span (collector=%s)", async (collector) => {
+	const received: { path?: string; auth?: string; version?: string | string[]; body: string }[] = [];
 	const server = createServer(async (req, res) => {
 		let body = "";
 		for await (const chunk of req) body += chunk;
-		received = {
+		received.push({
 			path: req.url,
 			auth: req.headers.authorization,
 			version: req.headers["x-langfuse-ingestion-version"],
-			body: JSON.parse(body),
-		};
+			body,
+		});
 		res.end("{}");
 	});
 	server.listen(0, "127.0.0.1");
@@ -23,55 +41,75 @@ it.each([false, true])("exports without prompt content (collector=%s)", async (c
 	try {
 		const address = server.address();
 		if (!address || typeof address === "string") throw new Error("missing server address");
-		vi.stubEnv("PI_LANGFUSE_ENABLED", "1");
+		stubCredentials("1");
 		vi.stubEnv("LANGFUSE_HOST", collector ? "" : `http://127.0.0.1:${address.port}`);
 		vi.stubEnv("PI_OTEL_TRACE_ENDPOINT", collector ? `http://127.0.0.1:${address.port}/v1/traces` : "");
 		vi.stubEnv("PI_OTEL_AUTHORIZATION", collector ? "Basic collector-test" : "");
-		vi.stubEnv("LANGFUSE_PUBLIC_KEY", "test-public");
-		vi.stubEnv("LANGFUSE_SECRET_KEY", "test-secret");
-		const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
-		langfuse({
-			on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) =>
-				handlers.set(event, handler),
-		} as unknown as ExtensionAPI);
+		const handlers = load();
+		const text = [{ type: "text", text: CONTENT }];
 		const ctx = {
-			model: { id: "test-model" },
-			sessionManager: { getSessionId: () => "test-session" },
-		} as ExtensionContext;
-		await handlers.get("agent_start")?.({}, ctx);
-		await handlers.get("agent_end")?.({ messages: [{ content: "private-prompt" }] }, ctx);
-		expect(received).toMatchObject({
+			cwd: `/work/${CONTENT}`,
+			model: { id: "test-model", name: CONTENT },
+			getSystemPrompt: () => CONTENT,
+			sessionManager: { getSessionId: () => "test-session", getEntries: () => [{ content: text }] },
+		} as unknown as ExtensionContext;
+		const events = [
+			{ type: "before_agent_start", prompt: CONTENT, systemPrompt: CONTENT },
+			{ type: "agent_start" },
+			{ type: "message_end", message: { role: "user", content: text } },
+			{ type: "tool_execution_end", toolName: "bash", result: { content: text } },
+			{
+				type: "agent_end",
+				messages: [
+					{ role: "user", content: text },
+					{ role: "assistant", content: text },
+				],
+			},
+		];
+		for (const event of events) await handlers.get(event.type)?.(event, ctx);
+		expect(received).toHaveLength(1);
+		const [request] = received;
+		expect(request).toMatchObject({
 			path: collector ? "/v1/traces" : "/api/public/otel/v1/traces",
 			auth: collector
 				? "Basic collector-test"
 				: `Basic ${Buffer.from("test-public:test-secret").toString("base64")}`,
 			version: "4",
-			body: {
-				resourceSpans: [
-					{
-						scopeSpans: [
-							{
-								spans: [
-									{
-										name: "pi.agent",
-										traceId: expect.stringMatching(/^[a-f0-9]{32}$/),
-										spanId: expect.stringMatching(/^[a-f0-9]{16}$/),
-									},
-								],
-							},
-						],
-					},
-				],
-			},
 		});
-		expect(JSON.stringify(received)).not.toContain("private-prompt");
+		expect(request.body).not.toContain(CONTENT);
+		expect(request.body).not.toContain("test-secret");
+		const [resourceSpan] = JSON.parse(request.body).resourceSpans;
+		const [span] = resourceSpan.scopeSpans[0].spans;
+		expect(resourceSpan.resource.attributes).toEqual([
+			{ key: "service.name", value: { stringValue: "prime-agent" } },
+		]);
+		expect(Object.keys(span).sort()).toEqual([
+			"attributes",
+			"endTimeUnixNano",
+			"kind",
+			"name",
+			"spanId",
+			"startTimeUnixNano",
+			"traceId",
+		]);
+		expect(span).toMatchObject({
+			name: "pi.agent",
+			traceId: expect.stringMatching(/^[a-f0-9]{32}$/),
+			spanId: expect.stringMatching(/^[a-f0-9]{16}$/),
+		});
+		expect(span.attributes).toEqual([
+			{ key: "langfuse.observation.type", value: { stringValue: "agent" } },
+			{ key: "langfuse.session.id", value: { stringValue: "test-session" } },
+			{ key: "gen_ai.request.model", value: { stringValue: "test-model" } },
+		]);
 	} finally {
 		await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 	}
 });
-it("is disabled by default", () => {
-	vi.stubEnv("PI_LANGFUSE_ENABLED", "");
-	const on = vi.fn();
-	langfuse({ on } as unknown as ExtensionAPI);
-	expect(on).not.toHaveBeenCalled();
-});
+it.each([undefined, "", "0", "true", "yes"])(
+	"is off unless PI_LANGFUSE_ENABLED=1 (%s) with credentials set",
+	(enabled) => {
+		stubCredentials(enabled);
+		expect(load().size).toBe(0);
+	},
+);
