@@ -1,1 +1,2 @@
 - Added explicit manual production and beta release selection without publication on source or tag pushes.
+- Changed stale manual beta promotions to fail explicitly instead of reporting success without updating the channel.

@@ -268,6 +268,30 @@ ${step(validation, "Verify and exercise exact final Mac archives").run}`,
 					expect(pack.run).toContain("--binary-dir packages/coding-agent/binaries");
 				}
 				expect(release.jobs.publish!.if).toBe(`github.event_name == 'workflow_dispatch' && ${staleGate}`);
+				const promotionScript = step(release.jobs.publish!, "Advance beta release").run!;
+				const staleRun = spawnSync(
+					"bash",
+					[
+						"-e",
+						"-o",
+						"pipefail",
+						"-c",
+						`gh() { test "$*" = "api repos/fixture/repo/commits/main --jq .sha" || exit 99; printf 'new-tip\\n'; }
+aws() { exit 99; }
+${promotionScript}`,
+					],
+					{
+						env: {
+							PATH: process.env.PATH,
+							DEFAULT_BRANCH: "main",
+							GITHUB_REPOSITORY: "fixture/repo",
+							BUILD_REF: "old-tip",
+						},
+						encoding: "utf8",
+					},
+				);
+				expect(staleRun.status, staleRun.stderr).toBe(1);
+				expect(staleRun.stderr).toContain("BETA_DEFAULT_BRANCH_MOVED");
 			} finally {
 				rmSync(directory, { recursive: true, force: true });
 			}

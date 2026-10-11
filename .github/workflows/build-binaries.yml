@@ -619,8 +619,8 @@ jobs:
         run: |
           latest_main_sha=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${DEFAULT_BRANCH}" --jq .sha)
           if [ "$latest_main_sha" != "$BUILD_REF" ]; then
-            echo "A newer main commit exists; keeping its beta pointers in place."
-            exit 0
+            echo "BETA_DEFAULT_BRANCH_MOVED: dispatch a new beta release for the current default-branch tip." >&2
+            exit 1
           fi
 
           BETA_DIR=release-artifacts/beta
