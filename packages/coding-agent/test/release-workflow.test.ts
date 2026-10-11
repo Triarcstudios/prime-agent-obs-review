@@ -69,7 +69,7 @@ describe("release workflow signature gates", () => {
 		]);
 		const publish = release.jobs.publish!;
 		expect(publish.needs).toEqual(expect.arrayContaining(["build", "validate-macos"]));
-		expect(publish.if).toBe(`github.event_name != 'pull_request' && ${staleGate}`);
+		expect(publish.if).toBe(`github.event_name == 'workflow_dispatch' && ${staleGate}`);
 		requiresSuccess(validation);
 		requiresSuccess(publish);
 	});
@@ -201,38 +201,63 @@ ${step(validation, "Verify and exercise exact final Mac archives").run}`,
 	});
 
 	it.skipIf(process.platform === "win32")(
-		"selects both real packer paths for PR validation without allowing publication",
+		"PR #27 validates PR packing and explicit manual production/beta selection",
 		() => {
+			const packageVersion: string = JSON.parse(readFileSync(join(repository, "package.json"), "utf8")).version;
+			const context = step(release.jobs["release-context"]!, "Resolve release context");
 			expect(release.on).toHaveProperty("pull_request");
+			expect(release.on).toHaveProperty("workflow_dispatch.inputs.channel.options", ["production", "beta"]);
 			const directory = mkdtempSync(join(tmpdir(), "prime-release-context-"));
 			try {
-				const output = join(directory, "output");
-				const context = step(release.jobs["release-context"]!, "Resolve release context");
-				const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", context.run!], {
-					cwd: repository,
-					env: {
-						...process.env,
-						EVENT_NAME: "pull_request",
-						GITHUB_SHA_VALUE: "abcdef0123456789",
-						RUN_NUMBER: "5",
-						RUN_ATTEMPT: "1",
-						GITHUB_OUTPUT: output,
-					},
-					encoding: "utf8",
-				});
-				expect(result.status, result.stderr).toBe(0);
-				const values = Object.fromEntries(
-					readFileSync(output, "utf8")
-						.trim()
-						.split("\n")
-						.map((line) => line.split("=")),
-				);
-				expect(values).toMatchObject({
-					publish_beta: "true",
-					publish_production: "true",
-					build_ref: "abcdef0123456789",
-				});
-				expect(values.beta_version).toBe(`${values.production_version}-beta.5.1.abcdef0`);
+				for (const [event, channel, tag, ref, status, beta, production] of [
+					["pull_request", "production", "", "main", 0, "true", "true"],
+					["workflow_dispatch", "production", "v1.2.3", "main", 0, "false", "true"],
+					["workflow_dispatch", "beta", "", "main", 0, "true", "false"],
+					["workflow_dispatch", "production", "", "main", 1, "false", "false"],
+					["workflow_dispatch", "beta", "", "feature", 1, "false", "false"],
+					["workflow_dispatch", "other", "", "main", 1, "false", "false"],
+					["workflow_dispatch", "beta", "v1.2.3", "main", 1, "false", "false"],
+				] as const) {
+					const output = join(directory, `${event}-${channel}-${tag || "none"}-${ref}`);
+					writeFileSync(output, "");
+					const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", context.run!], {
+						cwd: repository,
+						env: {
+							...process.env,
+							EVENT_NAME: event,
+							INPUT_RELEASE_CHANNEL: channel,
+							INPUT_RELEASE_TAG: tag,
+							DEFAULT_BRANCH: "main",
+							REF_NAME: ref,
+							REF_TYPE: "branch",
+							GITHUB_SHA_VALUE: "abcdef0123456789",
+							RUN_NUMBER: "5",
+							RUN_ATTEMPT: "1",
+							GITHUB_OUTPUT: output,
+						},
+						encoding: "utf8",
+					});
+					expect(result.status, result.stderr).toBe(status);
+					const values = Object.fromEntries(
+						readFileSync(output, "utf8")
+							.trim()
+							.split("\n")
+							.filter(Boolean)
+							.map((line) => line.split("=")),
+					);
+					expect(values).toEqual(
+						status === 0
+							? {
+									beta_version: beta === "true" ? `${packageVersion}-beta.5.1.abcdef0` : "",
+									build_ref: "abcdef0123456789",
+									production_version:
+										event === "workflow_dispatch" && channel === "production" ? "1.2.3" : packageVersion,
+									publish_beta: beta,
+									publish_production: production,
+								}
+							: {},
+					);
+				}
 				for (const [name, channel] of [
 					["Pack production release", "stable"],
 					["Pack beta release", "beta"],
@@ -242,7 +267,7 @@ ${step(validation, "Verify and exercise exact final Mac archives").run}`,
 					expect(pack.run).toContain(`--channel ${channel}`);
 					expect(pack.run).toContain("--binary-dir packages/coding-agent/binaries");
 				}
-				expect(release.jobs.publish!.if).toBe(`github.event_name != 'pull_request' && ${staleGate}`);
+				expect(release.jobs.publish!.if).toBe(`github.event_name == 'workflow_dispatch' && ${staleGate}`);
 			} finally {
 				rmSync(directory, { recursive: true, force: true });
 			}

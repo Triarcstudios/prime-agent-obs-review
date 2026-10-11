@@ -1,0 +1,1 @@
+- Added explicit manual production and beta release selection without publication on source or tag pushes.
