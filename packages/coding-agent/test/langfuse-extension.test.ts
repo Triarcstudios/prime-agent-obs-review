@@ -113,3 +113,86 @@ it.each([undefined, "", "0", "true", "yes"])(
 		expect(load().size).toBe(0);
 	},
 );
+
+it.each([
+	{
+		name: "numeric rejection",
+		status: 200,
+		body: JSON.stringify({ partialSuccess: { rejectedSpans: 1, errorMessage: CONTENT } }),
+		errors: ["Langfuse tracing FAIL: collector rejected spans"],
+		warnings: [],
+	},
+	{
+		name: "string rejection",
+		status: 200,
+		body: JSON.stringify({ partialSuccess: { rejectedSpans: "1", errorMessage: CONTENT } }),
+		errors: ["Langfuse tracing FAIL: collector rejected spans"],
+		warnings: [],
+	},
+	{
+		name: "zero rejected with warning",
+		status: 200,
+		body: JSON.stringify({ partialSuccess: { rejectedSpans: "0", errorMessage: CONTENT } }),
+		errors: [],
+		warnings: ["Langfuse tracing WARN: collector reported a warning"],
+	},
+	{
+		name: "zero rejected",
+		status: 200,
+		body: JSON.stringify({ partialSuccess: { rejectedSpans: 0 } }),
+		errors: [],
+		warnings: [],
+	},
+	{ name: "full success", status: 200, body: "{}", errors: [], warnings: [] },
+	{ name: "empty success", status: 200, body: "", errors: [], warnings: [] },
+	{
+		name: "invalid acknowledgement",
+		status: 200,
+		body: CONTENT,
+		errors: ["Langfuse tracing FAIL: export unavailable"],
+		warnings: [],
+	},
+	{ name: "HTTP failure", status: 503, body: CONTENT, errors: ["Langfuse tracing FAIL: HTTP 503"], warnings: [] },
+])(
+	"handles $name without leaking collector content or retrying an ended run",
+	async ({ status, body, errors, warnings }) => {
+		let received = 0;
+		const server = createServer(async (req, res) => {
+			for await (const _chunk of req) {
+				/* drain the local request */
+			}
+			received++;
+			res.writeHead(status, { "content-type": "application/json" });
+			res.end(body);
+		});
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+		const warningSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+		server.listen(0, "127.0.0.1");
+		await once(server, "listening");
+		try {
+			const address = server.address();
+			if (!address || typeof address === "string") throw new Error("missing server address");
+			stubCredentials("1");
+			vi.stubEnv("PI_OTEL_TRACE_ENDPOINT", `http://127.0.0.1:${address.port}/v1/traces`);
+			const handlers = load();
+			const ctx = {
+				model: { id: "test-model" },
+				sessionManager: { getSessionId: () => "test-session" },
+			} as unknown as ExtensionContext;
+			await handlers.get("agent_start")?.({}, ctx);
+			await handlers.get("agent_end")?.({}, ctx);
+			await handlers.get("agent_end")?.({}, ctx);
+			expect(received).toBe(1);
+			expect(errorSpy.mock.calls.map((args) => args[0])).toEqual(errors);
+			expect(warningSpy.mock.calls.map((args) => args[0])).toEqual(warnings);
+			const diagnostics = JSON.stringify([...errorSpy.mock.calls, ...warningSpy.mock.calls]);
+			expect(diagnostics).not.toContain(CONTENT);
+			expect(diagnostics).not.toContain("collector-test");
+			expect(diagnostics).not.toContain("test-secret");
+		} finally {
+			errorSpy.mockRestore();
+			warningSpy.mockRestore();
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		}
+	},
+);

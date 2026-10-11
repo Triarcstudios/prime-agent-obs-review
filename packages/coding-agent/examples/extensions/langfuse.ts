@@ -69,8 +69,29 @@ export default function langfuse(pi: ExtensionAPI) {
 				body: JSON.stringify(payload),
 				signal: AbortSignal.timeout(5000),
 			});
-			await response.body?.cancel();
-			if (!response.ok) console.error(`Langfuse tracing FAIL: HTTP ${response.status}`);
+			if (!response.ok) {
+				await response.body?.cancel();
+				console.error(`Langfuse tracing FAIL: HTTP ${response.status}`);
+				return;
+			}
+			const text = await response.text();
+			if (!text.trim()) return;
+			const acknowledgement: unknown = JSON.parse(text);
+			if (!acknowledgement || typeof acknowledgement !== "object" || Array.isArray(acknowledgement)) {
+				throw new Error("Invalid OTLP acknowledgement");
+			}
+			const partial = (acknowledgement as Record<string, unknown>).partialSuccess;
+			if (partial !== undefined) {
+				if (!partial || typeof partial !== "object" || Array.isArray(partial)) {
+					throw new Error("Invalid OTLP partial acknowledgement");
+				}
+				const result = partial as Record<string, unknown>;
+				if (result.rejectedSpans !== undefined && result.rejectedSpans !== 0 && result.rejectedSpans !== "0") {
+					console.error("Langfuse tracing FAIL: collector rejected spans");
+				} else if (typeof result.errorMessage === "string" && result.errorMessage.length > 0) {
+					console.warn("Langfuse tracing WARN: collector reported a warning");
+				}
+			}
 		} catch {
 			console.error("Langfuse tracing FAIL: export unavailable");
 		}
